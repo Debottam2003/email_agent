@@ -2,6 +2,7 @@ import express from "express";
 import { google } from "googleapis";
 import dotenv from "dotenv";
 import fs from "fs";
+import { log } from "console";
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ async function getEmailsPeriodically() {
         const messageIds = data.messages || [];
         let emailsArr = [];
         for (const message of messageIds) {
+            console.log(message)
             if (!set.has(message.id)) {
                 set.add(message.id);
                 const email = await gmail.users.messages.get({
@@ -67,7 +69,9 @@ async function getEmailsPeriodically() {
                     format: "metadata",
                     metadataHeaders: ["From", "Subject", "Date"],
                 });
-                emailsArr.push(email.data);
+                if(email.data.labelIds[0]!="SENT"){
+                   emailsArr.push(email.data);
+                }
             } else {
                 console.log(`Message ID ${message.id} already fetched`);
             }
@@ -112,6 +116,8 @@ app.get("/oauth2callback", async (req, res) => {
 
 
         res.send("Check your terminal. Save the refresh token.");
+        getEmailsPeriodically(); // initial call for fetching emails.
+        return;
     } catch (error) {
         console.error(error);
         res.status(500).send("Error during OAuth2 callback");
@@ -119,11 +125,10 @@ app.get("/oauth2callback", async (req, res) => {
 });
 
 app.get("/emails", getEmails);
-
 setInterval(() => {
     getEmailsPeriodically();
-}, 1000 * 60 * 2);
-
+}, 1000 * 60 * 60);
+    
 app.listen(3333, () => {
     console.log("Running on http://localhost:3333");
 });
