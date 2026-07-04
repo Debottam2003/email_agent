@@ -7,6 +7,8 @@ dotenv.config();
 
 const app = express();
 
+const set = new Set();
+
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -23,7 +25,7 @@ async function getEmails(req, res) {
     try {
         const { data } = await gmail.users.messages.list({
             userId: "me",
-            maxResults: 3,
+            maxResults: 30,
         });
 
         const messageIds = data.messages || [];
@@ -39,8 +41,6 @@ async function getEmails(req, res) {
             htmlContent += JSON.stringify(email);
             htmlContent += "<br><br><br>";
         }
-        fs.appendFileSync("./emails.txt", htmlContent, 'utf-8');
-
         res.send(htmlContent);
     } catch (error) {
         console.error(error);
@@ -53,27 +53,29 @@ async function getEmailsPeriodically() {
     try {
         const { data } = await gmail.users.messages.list({
             userId: "me",
-            maxResults: 3,
+            maxResults: 30,
         });
 
         const messageIds = data.messages || [];
-        let htmlContent = "";
+        let emailsArr = [];
         for (const message of messageIds) {
-            htmlContent += `<p>Message ID: ${message.id}</p>`;
-            const email = await gmail.users.messages.get({
-                userId: "me",
-                id: message.id,
-                format: "metadata",
-                metadataHeaders: ["From", "Subject", "Date"],
-            });
-            htmlContent += JSON.stringify(email);
-            htmlContent += "<br><br><br>";
+            if (!set.has(message.id)) {
+                set.add(message.id);
+                const email = await gmail.users.messages.get({
+                    userId: "me",
+                    id: message.id,
+                    format: "metadata",
+                    metadataHeaders: ["From", "Subject", "Date"],
+                });
+                emailsArr.push(email.data);
+            } else {
+                console.log(`Message ID ${message.id} already fetched`);
+            }
         }
-        fs.appendFileSync("./emails.txt", htmlContent, 'utf-8');
-
-        res.send(htmlContent);
+        console.log("Emails fetched");
+        fs.writeFileSync("./emails.json", JSON.stringify(emailsArr), 'utf-8');
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
     }
 }
 
@@ -118,9 +120,9 @@ app.get("/oauth2callback", async (req, res) => {
 
 app.get("/emails", getEmails);
 
-setTimeout(() => {
+setInterval(() => {
     getEmailsPeriodically();
-}, 1000 * 60);
+}, 1000 * 60 * 2);
 
 app.listen(3333, () => {
     console.log("Running on http://localhost:3333");
