@@ -74,7 +74,6 @@ async function getEmailsPeriodically() {
         res.send(htmlContent);
     } catch (error) {
         console.error(error);
-        res.status(500).send("Error fetching emails");
     }
 }
 
