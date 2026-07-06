@@ -1,2 +1,2 @@
-2. Add task in Google Calender
-3. DB design for storing emails and tasks
+1. After finding a important email add them in the google task.
+2. DB design for storing emails and tasks.
