@@ -30,7 +30,51 @@ export async function getGroqChatCompletion(email) {
     messages: [
       {
         role: "user",
-        content: `Classify Non-promotional important tasks and return "id" and "subject" of the email like '{ID:"",SUB:"the snippet provided"}' ignore replying if detected spam ${email.id}.${email.snippet},${email.labelIds}`,
+        content: `
+You are an email classifier.
+
+Task:
+Classify whether the following email is an IMPORTANT NON-PROMOTIONAL TASK.
+
+Mark as IMPORTANT only if it requires the user to perform an action, such as:
+- Meeting or interview
+- Calendar event
+- Deadline
+- Payment or bill due
+- Verification or authentication
+- Order or booking confirmation
+- Account/security alert
+- Government, banking, workplace, or educational communication
+- Appointment
+- Document submission
+- Travel itinerary
+- Delivery requiring action
+
+Ignore:
+- Advertisements
+- Marketing
+- Promotions
+- Newsletters
+- Social notifications
+- Spam
+- Discounts
+- Offers
+- Generic updates
+- Receipts that require no action
+
+Return ONLY valid JSON.
+
+If IMPORTANT:
+{"id":"${email.id}","subject":"<short subject>"}
+
+If NOT IMPORTANT:
+ignore adding anything
+
+Email:
+ID: ${email.id}
+Snippet: ${email.snippet}
+Labels: ${JSON.stringify(email.labelIds)}
+`,
       },
     ],
     model: "openai/gpt-oss-20b",
