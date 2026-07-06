@@ -10,6 +10,10 @@ const app = express();
 
 const set = new Set();
 
+const tasksID_Set = new Set();
+
+let TASK_LIST_ID = "";
+
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -19,6 +23,11 @@ const oauth2Client = new google.auth.OAuth2(
 const gmail = google.gmail({
     version: "v1",
     auth: oauth2Client
+});
+
+const tasks = google.tasks({
+    version: "v1",
+    auth: oauth2Client,
 });
 
 async function getEmails(req, res) {
@@ -44,7 +53,7 @@ async function getEmails(req, res) {
         }
         res.send(htmlContent);
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
         res.status(500).send("Error fetching emails");
     }
 
@@ -69,8 +78,8 @@ async function getEmailsPeriodically() {
                     format: "metadata",
                     metadataHeaders: ["From", "Subject", "Date"],
                 });
-                if(email.data.labelIds[0]!="SENT"){
-                   emailsArr.push(email.data);
+                if (email.data.labelIds[0] != "SENT") {
+                    emailsArr.push(email.data);
                 }
             } else {
                 console.log(`Message ID ${message.id} already fetched`);
@@ -83,6 +92,23 @@ async function getEmailsPeriodically() {
     }
 }
 
+// Add a task to Google Tasks List
+async function addTask() {
+    try {
+        const res = await tasks.tasks.insert({
+            tasklist: TASK_LIST_ID,
+            requestBody: {
+                title: "BBQ lunch",
+                notes: "Lets go 1v1 boys to BBQ lunch",
+                due: "2026-07-12T12:00:00.000Z"
+            }
+        });
+        // console.log(res.data);
+    } catch (error) {
+        console.error(error.message);
+    }
+}
+
 // Step 1: Login
 app.get("/login", (req, res) => {
     try {
@@ -90,13 +116,14 @@ app.get("/login", (req, res) => {
             access_type: "offline",
             prompt: "consent",
             scope: [
-                "https://www.googleapis.com/auth/gmail.readonly"
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/tasks"
             ]
         });
 
         res.redirect(url);
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
         res.status(500).send("Error during login");
     }
 });
@@ -116,10 +143,35 @@ app.get("/oauth2callback", async (req, res) => {
 
 
         res.send("Check your terminal. Save the refresh token.");
+
+        try {
+            const data = fs.readFileSync("tasks.json", "utf-8");
+            console.log(data);
+            if (!data) {
+                // Create a new task list
+                const list = await tasks.tasklists.insert({
+                    requestBody: {
+                        title: "My EMail Tasks"
+                    }
+                });
+
+                console.log(list.data.id);
+                TASK_LIST_ID = list.data.id;
+                fs.writeFileSync("tasks.json", JSON.stringify({ taskListId: TASK_LIST_ID }));
+                addTask(); // Add a task to the Google Tasks list.
+            } else {
+                console.log("tasks.json exists, reading taskListId from it.");
+                const parsedData = JSON.parse(data);
+                TASK_LIST_ID = parsedData.taskListId;
+                addTask(); // Add a task to the Google Tasks list.
+            }
+        } catch (error) {
+            console.error(error.message);
+        }
         getEmailsPeriodically(); // initial call for fetching emails.
         return;
     } catch (error) {
-        console.error(error);
+        console.error(error.message);
         res.status(500).send("Error during OAuth2 callback");
     }
 });
@@ -127,8 +179,8 @@ app.get("/oauth2callback", async (req, res) => {
 app.get("/emails", getEmails);
 setInterval(() => {
     getEmailsPeriodically();
-}, 1000 * 60 * 60);
-    
+}, 1000 * 60 * 60);// Fetch emails every hour
+
 app.listen(3333, () => {
     console.log("Running on http://localhost:3333");
 });
