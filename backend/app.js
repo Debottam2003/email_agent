@@ -3,6 +3,7 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 import fs from "fs";
 import { log } from "console";
+import Groq from "groq-sdk";
 
 dotenv.config();
 
@@ -13,6 +14,72 @@ const set = new Set();
 const tasksID_Set = new Set();
 
 let TASK_LIST_ID = "";
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+async function getGroqChatCompletion(email) {
+    return groq.chat.completions.create({
+        messages: [
+            {
+                role: "user",
+                content: `
+You are an AI assistant that extracts actionable tasks from emails.
+
+Your goal is to determine whether the email contains a real task that should be added to Google Tasks.
+
+Create a task ONLY if the email requires the user to perform an action, including:
+- Meeting or interview
+- Appointment
+- Deadline
+- Bill or payment due
+- Verification or authentication
+- Document submission
+- Travel or booking
+- Order pickup or delivery requiring action
+- Government, banking, educational, or workplace communication
+- Any email requesting the user to do something before a specific time
+
+DO NOT create tasks for:
+- Promotions
+- Marketing
+- Advertisements
+- Newsletters
+- Social media notifications
+- Spam
+- Discounts or offers
+- Generic updates
+- Receipts requiring no action
+
+If the email contains a task, return ONLY valid JSON in this format:
+
+{
+  "id": "${email.id}",
+  "task": {
+    "title": "Short actionable title",
+    "notes": "Brief description of what needs to be done.",
+    "due": "YYYY-MM-DDTHH:mm:ss.sssZ"
+  }
+}
+
+Rules:
+- "title" should be short (max 8 words).
+- "notes" should summarize the action.
+- If no due date or time is mentioned, omit the "due" field entirely.
+- Convert all dates/times into ISO 8601 UTC format.
+- Do not invent dates.
+- Return ONLY JSON.
+- If there is no actionable task, ignore
+
+Email:
+ID: ${email.id}
+Snippet: ${email.snippet}
+Labels: ${JSON.stringify(email.labelIds)}
+`,
+            },
+        ],
+        model: "openai/gpt-oss-20b",
+    });
+}
 
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -35,7 +102,7 @@ async function getEmails(req, res) {
     try {
         const { data } = await gmail.users.messages.list({
             userId: "me",
-            maxResults: 30,
+            maxResults: 10,
         });
 
         const messageIds = data.messages || [];
@@ -53,7 +120,7 @@ async function getEmails(req, res) {
         }
         res.send(htmlContent);
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
         res.status(500).send("Error fetching emails");
     }
 
@@ -63,13 +130,13 @@ async function getEmailsPeriodically() {
     try {
         const { data } = await gmail.users.messages.list({
             userId: "me",
-            maxResults: 30,
+            maxResults: 10,
         });
 
         const messageIds = data.messages || [];
         let emailsArr = [];
         for (const message of messageIds) {
-            console.log(message)
+            // console.log(message);
             if (!set.has(message.id)) {
                 set.add(message.id);
                 const email = await gmail.users.messages.get({
@@ -82,30 +149,61 @@ async function getEmailsPeriodically() {
                     emailsArr.push(email.data);
                 }
             } else {
-                console.log(`Message ID ${message.id} already fetched`);
+                // console.log(`Message ID ${message.id} already fetched`);
             }
         }
         console.log("Emails fetched");
         fs.writeFileSync("./emails.json", JSON.stringify(emailsArr), 'utf-8');
+
+        const taskArr = [];
+
+        for (let email of emailsArr) {
+            // console.log(email)
+            try {
+                const chatCompletion = await getGroqChatCompletion(email);
+                // Print the completion returned by the LLM.
+
+                let ch = chatCompletion.choices[0]?.message?.content.replaceAll("**", "") || "";
+                console.log(ch);
+                if (ch != "") {
+                    try {
+                        let task = JSON.parse(ch);
+                        console.log(task);
+                        taskArr.push(task);
+                    } catch (err) {
+                        console.log(err);
+                    }
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        // Add tasks
+        console.log(taskArr);
+        for (let task of taskArr) {
+            addTask(task);
+        }
+
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
     }
 }
 
 // Add a task to Google Tasks List
-async function addTask() {
+async function addTask(task) {
     try {
         const res = await tasks.tasks.insert({
             tasklist: TASK_LIST_ID,
             requestBody: {
-                title: "BBQ lunch",
-                notes: "Lets go 1v1 boys to BBQ lunch",
-                due: "2026-07-12T12:00:00.000Z"
+                title: task.task.title,
+                notes: task.task.notes,
+                due: task.task.due,
             }
         });
         // console.log(res.data);
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
     }
 }
 
@@ -123,7 +221,7 @@ app.get("/login", (req, res) => {
 
         res.redirect(url);
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
         res.status(500).send("Error during login");
     }
 });
@@ -154,24 +252,21 @@ app.get("/oauth2callback", async (req, res) => {
                         title: "My EMail Tasks"
                     }
                 });
-
                 console.log(list.data.id);
                 TASK_LIST_ID = list.data.id;
                 fs.writeFileSync("tasks.json", JSON.stringify({ taskListId: TASK_LIST_ID }));
-                addTask(); // Add a task to the Google Tasks list.
             } else {
                 console.log("tasks.json exists, reading taskListId from it.");
                 const parsedData = JSON.parse(data);
                 TASK_LIST_ID = parsedData.taskListId;
-                addTask(); // Add a task to the Google Tasks list.
             }
         } catch (error) {
-            console.error(error.message);
+            console.error(error);
         }
         getEmailsPeriodically(); // initial call for fetching emails.
         return;
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
         res.status(500).send("Error during OAuth2 callback");
     }
 });
